@@ -4,22 +4,40 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/codingdestro/wallet-go/internal/platform"
 	"github.com/codingdestro/wallet-go/internal/vault"
+	"github.com/codingdestro/wallet-go/pkg/utils"
 	"github.com/codingdestro/wallet-go/ui"
 	"golang.org/x/term"
 )
 
-const vaultPath = "wallet.enc"
+func getVaultPath() string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		// Fallback to home directory if config dir is not available
+		homeDir, _ := os.UserHomeDir()
+		configDir = homeDir
+	}
+
+	appDir := filepath.Join(configDir, "wallet")
+	if _, err := os.Stat(appDir); os.IsNotExist(err) {
+		_ = os.MkdirAll(appDir, 0700)
+	}
+
+	return filepath.Join(appDir, "wallet.enc")
+}
 
 func main() {
+	vaultPath := getVaultPath()
 	listFlag := flag.Bool("l", false, "List all keys in the vault")
 	addFlag := flag.String("a", "", "Add or update a secret: -a <key>")
 	delFlag := flag.String("d", "", "Delete a secret: -d <key>")
 	getFlag := flag.String("v", "", "View and copy a secret: -v <key>")
+	genFlag := flag.Int("g", 0, "Generate a secure password of length <n>")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of wallet:\n")
@@ -28,6 +46,11 @@ func main() {
 	}
 
 	flag.Parse()
+
+	if *genFlag > 0 {
+		handleGenerate(*genFlag)
+		return
+	}
 
 	// Dependency Injection Setup
 	cb := &platform.SystemClipboard{}
@@ -104,6 +127,28 @@ func handleCLI(list bool, add, del, get string, factory ui.StoreFactory, cb plat
 		}
 		fmt.Printf("Success: Value for [%s] copied to clipboard!\n", get)
 	}
+}
+
+func handleGenerate(length int) {
+	cb := &platform.SystemClipboard{}
+	config := utils.PasswordConfig{
+		Length:           length,
+		IncludeDigits:    true,
+		IncludeSymbols:   true,
+		IncludeUppercase: true,
+	}
+	pwd, err := utils.GeneratePassword(config)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := cb.Write(pwd); err != nil {
+		fmt.Printf("Error: Failed to copy to clipboard: %v\n", err)
+		fmt.Println("Generated Password:", pwd)
+		return
+	}
+	fmt.Printf("Success: Generated %d-character password and copied to clipboard!\n", length)
 }
 
 func promptPassword() string {

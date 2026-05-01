@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/codingdestro/wallet-go/internal/platform"
 	"github.com/codingdestro/wallet-go/internal/vault"
+	"github.com/codingdestro/wallet-go/pkg/utils"
 )
 
 type State int
@@ -162,6 +163,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Err = nil
 
 			case StateValueEntry:
+				if msg.String() == "ctrl+g" {
+					config := utils.PasswordConfig{
+						Length:           24,
+						IncludeDigits:    true,
+						IncludeSymbols:   true,
+						IncludeUppercase: true,
+					}
+					pwd, err := utils.GeneratePassword(config)
+					if err == nil {
+						m.TextInput.SetValue(pwd)
+						m.StatusMsg = "Generated secure password!"
+					}
+					return m, nil
+				}
 				value := m.TextInput.Value()
 				err := m.Store.Set(m.PendingKey, value)
 				if err != nil {
@@ -300,7 +315,7 @@ func (m Model) View() string {
 	case StateList:
 		help = "enter: copy secret • esc: back • q: quit"
 	case StateKeyEntry, StateValueEntry:
-		help = "enter: confirm • esc: cancel"
+		help = "enter: confirm • ctrl+g: gen password • esc: cancel"
 	case StateUpdateKey:
 		help = "enter: update value • esc: back"
 	case StateDeleteConfirm:

@@ -8,7 +8,6 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/codingdestro/wallet-go/pkg/utils"
 )
 
@@ -33,7 +32,7 @@ type Model struct {
 	Password   string
 	Filename   string
 	PendingKey string
-	Keys       []string // Sorted keys for listing
+	Keys       []string
 	ListCursor int
 	Err        error
 	StatusMsg  string
@@ -41,13 +40,13 @@ type Model struct {
 
 func InitialModel() Model {
 	ti := textinput.New()
-	ti.Placeholder = "Password"
+	ti.Placeholder = "Enter Password..."
 	ti.Focus()
 	ti.EchoMode = textinput.EchoPassword
 	ti.EchoCharacter = '•'
 
 	return Model{
-		Choices:   []string{"Add Key", "List Keys", "Update Key", "Delete Key"},
+		Choices:   []string{"Add Secret", "List Secrets", "Update Secret", "Delete Secret"},
 		State:     StatePassword,
 		TextInput: ti,
 		Data:      make(map[string]string),
@@ -73,11 +72,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
-			if m.State == StateMenu {
-				return m, tea.Quit
-			}
-			if msg.String() == "ctrl+c" {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q":
+			if m.State == StateMenu || m.State == StateList {
 				return m, tea.Quit
 			}
 
@@ -113,7 +111,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if utils.FileExists(m.Filename) {
 					err := utils.LoadEncryptedJSON(m.Filename, m.Password, &m.Data)
 					if err != nil {
-						m.Err = fmt.Errorf("wrong password or corrupt file")
+						m.Err = fmt.Errorf("Access Denied: Invalid Password")
 						m.TextInput.Reset()
 						return m, nil
 					}
@@ -129,27 +127,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case StateMenu:
 				choice := m.Choices[m.Cursor]
 				switch choice {
-				case "Add Key":
+				case "Add Secret":
 					m.State = StateKeyEntry
-					m.TextInput.Placeholder = "Key"
+					m.TextInput.Placeholder = "Secret Name (Key)"
 					m.TextInput.EchoMode = textinput.EchoNormal
 					m.TextInput.Focus()
-				case "List Keys":
+				case "List Secrets":
 					m.refreshKeys()
 					m.State = StateList
 					m.ListCursor = 0
-				case "Update Key":
+				case "Update Secret":
 					m.refreshKeys()
 					if len(m.Keys) == 0 {
-						m.Err = fmt.Errorf("no keys to update")
+						m.Err = fmt.Errorf("Vault is empty")
 						return m, nil
 					}
 					m.State = StateUpdateKey
 					m.ListCursor = 0
-				case "Delete Key":
+				case "Delete Secret":
 					m.refreshKeys()
 					if len(m.Keys) == 0 {
-						m.Err = fmt.Errorf("no keys to delete")
+						m.Err = fmt.Errorf("Vault is empty")
 						return m, nil
 					}
 					m.State = StateDeleteConfirm
@@ -160,12 +158,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case StateKeyEntry:
 				m.PendingKey = strings.TrimSpace(m.TextInput.Value())
 				if m.PendingKey == "" {
-					m.Err = fmt.Errorf("key cannot be empty")
+					m.Err = fmt.Errorf("Key required")
 					return m, nil
 				}
 				m.State = StateValueEntry
 				m.TextInput.Reset()
-				m.TextInput.Placeholder = "Value"
+				m.TextInput.Placeholder = "Secret Value"
 				m.TextInput.EchoMode = textinput.EchoPassword
 				m.TextInput.EchoCharacter = '•'
 				m.Err = nil
@@ -190,9 +188,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					valToCopy := m.Data[keyToCopy]
 					err := clipboard.WriteAll(valToCopy)
 					if err != nil {
-						m.Err = fmt.Errorf("failed to copy to clipboard: %v", err)
+						m.Err = fmt.Errorf("Clipboard error: %v", err)
 					} else {
-						m.StatusMsg = fmt.Sprintf("Copied value for [%s] to clipboard!", keyToCopy)
+						m.StatusMsg = fmt.Sprintf("Copied: %s", keyToCopy)
 					}
 				}
 
@@ -200,7 +198,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.PendingKey = m.Keys[m.ListCursor]
 				m.State = StateValueEntry
 				m.TextInput.Reset()
-				m.TextInput.Placeholder = "New Value"
+				m.TextInput.Placeholder = "New Secret Value"
 				m.TextInput.EchoMode = textinput.EchoPassword
 				m.TextInput.EchoCharacter = '•'
 				m.TextInput.Focus()
@@ -239,85 +237,84 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	var s strings.Builder
+	var content strings.Builder
 
-	s.WriteString(TitleStyle.Render("Wallet CLI"))
-	s.WriteString("\n\n")
+	// Header
+	content.WriteString(HeaderStyle.Render(" "+IconLock+" SECURE VAULT CLI "))
+	content.WriteString("\n\n")
 
+	// Status & Error area
 	if m.Err != nil {
-		s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render(fmt.Sprintf("Error: %v\n\n", m.Err)))
+		content.WriteString(ErrorStyle.Render("! "+m.Err.Error()) + "\n\n")
 	}
-
 	if m.StatusMsg != "" {
-		s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(fmt.Sprintf("%s\n\n", m.StatusMsg)))
+		content.WriteString(StatusStyle.Render(IconCheck+" "+m.StatusMsg) + "\n\n")
 	}
 
 	switch m.State {
 	case StatePassword:
-		s.WriteString("Enter Wallet Password:\n\n")
-		s.WriteString(m.TextInput.View())
-		s.WriteString(HelpStyle.Render("\n\npress enter to unlock/create"))
+		content.WriteString(InputLabelStyle.Render("Vault Authentication"))
+		content.WriteString("\n" + m.TextInput.View() + "\n")
 
 	case StateMenu:
+		content.WriteString(TitleStyle.Render("Main Menu"))
+		content.WriteString("\n")
 		for i, choice := range m.Choices {
-			cursor := " "
-			var style lipgloss.Style
-
 			if m.Cursor == i {
-				cursor = ">"
-				style = SelectedItemStyle
+				content.WriteString(SelectedItemStyle.Render(IconSelected+" "+choice) + "\n")
 			} else {
-				style = ItemStyle
+				content.WriteString(ItemStyle.Render(choice) + "\n")
 			}
-
-			s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, choice)))
-			s.WriteString("\n")
 		}
-		s.WriteString(HelpStyle.Render("\n↑/↓: navigate • enter: select • q: quit"))
 
 	case StateKeyEntry:
-		s.WriteString(fmt.Sprintf(
-			"Enter Key:\n\n%s\n\n%s",
-			m.TextInput.View(),
-			HelpStyle.Render("esc: back • enter: next"),
-		))
+		content.WriteString(InputLabelStyle.Render("New Secret Name"))
+		content.WriteString("\n" + m.TextInput.View() + "\n")
 
 	case StateValueEntry:
-		s.WriteString(fmt.Sprintf(
-			"Enter Value for [%s]:\n\n%s\n\n%s",
-			m.PendingKey,
-			m.TextInput.View(),
-			HelpStyle.Render("esc: back • enter: submit"),
-		))
+		content.WriteString(InputLabelStyle.Render(fmt.Sprintf("Secret for [%s]", m.PendingKey)))
+		content.WriteString("\n" + m.TextInput.View() + "\n")
 
 	case StateList, StateUpdateKey, StateDeleteConfirm:
-		title := "List of Keys:"
-		help := "esc: back"
+		title := "Vault Secrets"
 		if m.State == StateUpdateKey {
-			title = "Select Key to Update:"
-			help = "↑/↓: navigate • enter: select • esc: back"
+			title = "Select to Update"
 		} else if m.State == StateDeleteConfirm {
-			title = "Select Key to Delete:"
-			help = "↑/↓: navigate • enter: DELETE • esc: back"
+			title = "Select to Delete"
 		}
+		content.WriteString(TitleStyle.Render(title) + "\n")
 
-		s.WriteString(title + "\n\n")
 		if len(m.Keys) == 0 {
-			s.WriteString(ItemStyle.Render("No keys found."))
+			content.WriteString(ItemStyle.Render("Vault is currently empty."))
 		} else {
 			for i, key := range m.Keys {
-				cursor := " "
-				style := ItemStyle
-				if (m.State == StateList || m.State == StateUpdateKey || m.State == StateDeleteConfirm) && m.ListCursor == i {
-					cursor = ">"
-					style = SelectedItemStyle
+				if m.ListCursor == i {
+					content.WriteString(SelectedItemStyle.Render(IconSelected+" "+key) + "\n")
+				} else {
+					content.WriteString(ItemStyle.Render(key) + "\n")
 				}
-				s.WriteString(style.Render(fmt.Sprintf("%s %s", cursor, key)))
-				s.WriteString("\n")
 			}
 		}
-		s.WriteString(HelpStyle.Render("\n" + help))
 	}
 
-	return s.String()
+	// Footer
+	var help string
+	switch m.State {
+	case StatePassword:
+		help = "enter: unlock vault • ctrl+c: quit"
+	case StateMenu:
+		help = "↑/↓: navigate • enter: select • q: quit"
+	case StateList:
+		help = "enter: copy secret • esc: back • q: quit"
+	case StateKeyEntry, StateValueEntry:
+		help = "enter: confirm • esc: cancel"
+	case StateUpdateKey:
+		help = "enter: update value • esc: back"
+	case StateDeleteConfirm:
+		help = "enter: DELETE PERMANENTLY • esc: back"
+	}
+
+	content.WriteString(FooterStyle.Render(help))
+
+	return WindowStyle.Render(content.String())
 }

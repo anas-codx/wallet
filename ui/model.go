@@ -1,3 +1,4 @@
+// Package ui
 package ui
 
 import (
@@ -30,9 +31,9 @@ type Model struct {
 	Cursor       int
 	State        State
 	TextInput    textinput.Model
-	Store        vault.SecretStore // Dependency Inversion (Interface)
+	Store        vault.SecretStore  // Dependency Inversion (Interface)
 	Clipboard    platform.Clipboard // Dependency Inversion (Interface)
-	StoreFactory StoreFactory      // Injection of Factory
+	StoreFactory StoreFactory       // Injection of Factory
 	PendingKey   string
 	Keys         []string
 	ListCursor   int
@@ -232,7 +233,7 @@ func (m Model) View() string {
 	var content strings.Builder
 
 	// Header
-	content.WriteString(HeaderStyle.Render(" "+IconLock+" SECURE VAULT CLI "))
+	content.WriteString(HeaderStyle.Render(" " + IconLock + " SECURE VAULT CLI "))
 	content.WriteString("\n\n")
 
 	// Status & Error area

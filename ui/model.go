@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/codingdestro/wallet-go/internal/platform"
 	"github.com/codingdestro/wallet-go/internal/vault"
 )
 
@@ -22,22 +22,26 @@ const (
 	StateDeleteConfirm
 )
 
+// StoreFactory is a function type for creating a SecretStore (Factory Pattern).
+type StoreFactory func(password string) (vault.SecretStore, error)
+
 type Model struct {
-	Choices    []string
-	Cursor     int
-	State      State
-	TextInput  textinput.Model
-	Vault      *vault.Vault
-	Password   string
-	Filename   string
-	PendingKey string
-	Keys       []string
-	ListCursor int
-	Err        error
-	StatusMsg  string
+	Choices      []string
+	Cursor       int
+	State        State
+	TextInput    textinput.Model
+	Store        vault.SecretStore // Dependency Inversion (Interface)
+	Clipboard    platform.Clipboard // Dependency Inversion (Interface)
+	StoreFactory StoreFactory      // Injection of Factory
+	PendingKey   string
+	Keys         []string
+	ListCursor   int
+	Err          error
+	StatusMsg    string
 }
 
-func InitialModel() Model {
+// NewModel creates a new UI Model using Dependency Injection.
+func NewModel(factory StoreFactory, cb platform.Clipboard) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Enter Password..."
 	ti.Focus()
@@ -45,10 +49,11 @@ func InitialModel() Model {
 	ti.EchoCharacter = '•'
 
 	return Model{
-		Choices:   []string{"Add Secret", "List Secrets", "Update Secret", "Delete Secret"},
-		State:     StatePassword,
-		TextInput: ti,
-		Filename:  "wallet.enc",
+		Choices:      []string{"Add Secret", "List Secrets", "Update Secret", "Delete Secret"},
+		State:        StatePassword,
+		TextInput:    ti,
+		StoreFactory: factory,
+		Clipboard:    cb,
 	}
 }
 
@@ -98,14 +103,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.State {
 			case StatePassword:
 				pass := m.TextInput.Value()
-				v, err := vault.Open(m.Filename, pass)
+				v, err := m.StoreFactory(pass)
 				if err != nil {
 					m.Err = err
 					m.TextInput.Reset()
 					return m, nil
 				}
-				m.Vault = v
-				m.Password = pass
+				m.Store = v
 				m.Keys = v.List()
 				m.State = StateMenu
 				m.TextInput.Reset()
@@ -121,11 +125,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.TextInput.EchoMode = textinput.EchoNormal
 					m.TextInput.Focus()
 				case "List Secrets":
-					m.Keys = m.Vault.List()
+					m.Keys = m.Store.List()
 					m.State = StateList
 					m.ListCursor = 0
 				case "Update Secret":
-					m.Keys = m.Vault.List()
+					m.Keys = m.Store.List()
 					if len(m.Keys) == 0 {
 						m.Err = fmt.Errorf("Vault is empty")
 						return m, nil
@@ -133,7 +137,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.State = StateUpdateKey
 					m.ListCursor = 0
 				case "Delete Secret":
-					m.Keys = m.Vault.List()
+					m.Keys = m.Store.List()
 					if len(m.Keys) == 0 {
 						m.Err = fmt.Errorf("Vault is empty")
 						return m, nil
@@ -158,12 +162,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case StateValueEntry:
 				value := m.TextInput.Value()
-				err := m.Vault.Set(m.PendingKey, value)
+				err := m.Store.Set(m.PendingKey, value)
 				if err != nil {
 					m.Err = err
 					return m, nil
 				}
-				m.Keys = m.Vault.List()
+				m.Keys = m.Store.List()
 				m.State = StateMenu
 				m.TextInput.Blur()
 				m.TextInput.Reset()
@@ -173,8 +177,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case StateList:
 				if len(m.Keys) > 0 {
 					keyToCopy := m.Keys[m.ListCursor]
-					valToCopy, _ := m.Vault.Get(keyToCopy)
-					err := clipboard.WriteAll(valToCopy)
+					valToCopy, _ := m.Store.Get(keyToCopy)
+					err := m.Clipboard.Write(valToCopy)
 					if err != nil {
 						m.Err = fmt.Errorf("Clipboard error: %v", err)
 					} else {
@@ -194,12 +198,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case StateDeleteConfirm:
 				keyToDelete := m.Keys[m.ListCursor]
-				err := m.Vault.Delete(keyToDelete)
+				err := m.Store.Delete(keyToDelete)
 				if err != nil {
 					m.Err = err
 					return m, nil
 				}
-				m.Keys = m.Vault.List()
+				m.Keys = m.Store.List()
 				m.State = StateMenu
 				m.Err = nil
 			}

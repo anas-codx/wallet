@@ -6,8 +6,8 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/codingdestro/wallet-go/internal/platform"
 	"github.com/codingdestro/wallet-go/internal/vault"
 	"github.com/codingdestro/wallet-go/ui"
 	"golang.org/x/term"
@@ -29,30 +29,36 @@ func main() {
 
 	flag.Parse()
 
+	// Dependency Injection Setup
+	cb := &platform.SystemClipboard{}
+	factory := func(password string) (vault.SecretStore, error) {
+		return vault.NewStore(vaultPath, password)
+	}
+
 	// If any flag is set, use the CLI handler
 	if *listFlag || *addFlag != "" || *delFlag != "" || *getFlag != "" {
-		handleCLI(*listFlag, *addFlag, *delFlag, *getFlag)
+		handleCLI(*listFlag, *addFlag, *delFlag, *getFlag, factory, cb)
 		return
 	}
 
-	// Default: Launch TUI
-	p := tea.NewProgram(ui.InitialModel())
+	// Default: Launch TUI with Dependencies Injected
+	p := tea.NewProgram(ui.NewModel(factory, cb))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func handleCLI(list bool, add, del, get string) {
+func handleCLI(list bool, add, del, get string, factory ui.StoreFactory, cb platform.Clipboard) {
 	password := promptPassword()
-	v, err := vault.Open(vaultPath, password)
+	store, err := factory(password)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	if list {
-		keys := v.List()
+		keys := store.List()
 		if len(keys) == 0 {
 			fmt.Println("Vault is empty.")
 			return
@@ -71,7 +77,7 @@ func handleCLI(list bool, add, del, get string) {
 			fmt.Printf("Error reading value: %v\n", err)
 			os.Exit(1)
 		}
-		if err := v.Set(add, string(byteVal)); err != nil {
+		if err := store.Set(add, string(byteVal)); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -79,7 +85,7 @@ func handleCLI(list bool, add, del, get string) {
 	}
 
 	if del != "" {
-		if err := v.Delete(del); err != nil {
+		if err := store.Delete(del); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -87,12 +93,12 @@ func handleCLI(list bool, add, del, get string) {
 	}
 
 	if get != "" {
-		val, ok := v.Get(get)
+		val, ok := store.Get(get)
 		if !ok {
 			fmt.Printf("Error: Key [%s] not found.\n", get)
 			os.Exit(1)
 		}
-		if err := clipboard.WriteAll(val); err != nil {
+		if err := cb.Write(val); err != nil {
 			fmt.Printf("Error: Failed to copy to clipboard: %v\n", err)
 			return
 		}

@@ -2,13 +2,12 @@ package ui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/codingdestro/wallet-go/pkg/utils"
+	"github.com/codingdestro/wallet-go/internal/vault"
 )
 
 type State int
@@ -28,7 +27,7 @@ type Model struct {
 	Cursor     int
 	State      State
 	TextInput  textinput.Model
-	Data       map[string]string
+	Vault      *vault.Vault
 	Password   string
 	Filename   string
 	PendingKey string
@@ -49,21 +48,12 @@ func InitialModel() Model {
 		Choices:   []string{"Add Secret", "List Secrets", "Update Secret", "Delete Secret"},
 		State:     StatePassword,
 		TextInput: ti,
-		Data:      make(map[string]string),
 		Filename:  "wallet.enc",
 	}
 }
 
 func (m Model) Init() tea.Cmd {
 	return textinput.Blink
-}
-
-func (m *Model) refreshKeys() {
-	m.Keys = []string{}
-	for k := range m.Data {
-		m.Keys = append(m.Keys, k)
-	}
-	sort.Strings(m.Keys)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -107,18 +97,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.StatusMsg = ""
 			switch m.State {
 			case StatePassword:
-				m.Password = m.TextInput.Value()
-				if utils.FileExists(m.Filename) {
-					err := utils.LoadEncryptedJSON(m.Filename, m.Password, &m.Data)
-					if err != nil {
-						m.Err = fmt.Errorf("Access Denied: Invalid Password")
-						m.TextInput.Reset()
-						return m, nil
-					}
-				} else {
-					m.Data = make(map[string]string)
+				pass := m.TextInput.Value()
+				v, err := vault.Open(m.Filename, pass)
+				if err != nil {
+					m.Err = err
+					m.TextInput.Reset()
+					return m, nil
 				}
-				m.refreshKeys()
+				m.Vault = v
+				m.Password = pass
+				m.Keys = v.List()
 				m.State = StateMenu
 				m.TextInput.Reset()
 				m.TextInput.Blur()
@@ -133,11 +121,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.TextInput.EchoMode = textinput.EchoNormal
 					m.TextInput.Focus()
 				case "List Secrets":
-					m.refreshKeys()
+					m.Keys = m.Vault.List()
 					m.State = StateList
 					m.ListCursor = 0
 				case "Update Secret":
-					m.refreshKeys()
+					m.Keys = m.Vault.List()
 					if len(m.Keys) == 0 {
 						m.Err = fmt.Errorf("Vault is empty")
 						return m, nil
@@ -145,7 +133,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.State = StateUpdateKey
 					m.ListCursor = 0
 				case "Delete Secret":
-					m.refreshKeys()
+					m.Keys = m.Vault.List()
 					if len(m.Keys) == 0 {
 						m.Err = fmt.Errorf("Vault is empty")
 						return m, nil
@@ -170,12 +158,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case StateValueEntry:
 				value := m.TextInput.Value()
-				m.Data[m.PendingKey] = value
-				err := utils.SaveEncryptedJSON(m.Filename, m.Password, m.Data)
+				err := m.Vault.Set(m.PendingKey, value)
 				if err != nil {
 					m.Err = err
+					return m, nil
 				}
-				m.refreshKeys()
+				m.Keys = m.Vault.List()
 				m.State = StateMenu
 				m.TextInput.Blur()
 				m.TextInput.Reset()
@@ -185,7 +173,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case StateList:
 				if len(m.Keys) > 0 {
 					keyToCopy := m.Keys[m.ListCursor]
-					valToCopy := m.Data[keyToCopy]
+					valToCopy, _ := m.Vault.Get(keyToCopy)
 					err := clipboard.WriteAll(valToCopy)
 					if err != nil {
 						m.Err = fmt.Errorf("Clipboard error: %v", err)
@@ -206,12 +194,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case StateDeleteConfirm:
 				keyToDelete := m.Keys[m.ListCursor]
-				delete(m.Data, keyToDelete)
-				err := utils.SaveEncryptedJSON(m.Filename, m.Password, m.Data)
+				err := m.Vault.Delete(keyToDelete)
 				if err != nil {
 					m.Err = err
+					return m, nil
 				}
-				m.refreshKeys()
+				m.Keys = m.Vault.List()
 				m.State = StateMenu
 				m.Err = nil
 			}

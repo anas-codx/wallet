@@ -2,6 +2,10 @@
 wallet
 /wallet
 
+# Vault
+wallet.enc
+*.enc
+
 # Go
 vendor/
 *.exe

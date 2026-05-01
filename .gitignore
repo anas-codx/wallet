@@ -1,0 +1,9 @@
+# Binary
+wallet
+/wallet
+
+# Go
+vendor/
+*.exe
+*.test
+*.out
